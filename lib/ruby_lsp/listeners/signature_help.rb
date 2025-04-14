@@ -70,8 +70,35 @@ module RubyLsp
         end || 0
 
         parameter_length = [T.must(signatures[active_sig_index]).parameters.length - 1, 0].max
-        active_parameter = (arguments.length - 1).clamp(0, parameter_length)
+        keyword_arguments = arguments.find { _1.is_a?(Prism::KeywordHashNode) }
+        active_parameter =
+          if keyword_arguments
+            keyword_arguments = T.cast(keyword_arguments, Prism::KeywordHashNode)
+            arg_names = T.cast(
+              keyword_arguments.elements.select { _1.is_a?(Prism::AssocNode) },
+              T::Array[Prism::AssocNode],
+            ).map do |arg|
+              key = arg.key
+              arg_name =
+                case key
+                when Prism::StringNode then key.content
+                when Prism::SymbolNode then key.value
+                when Prism::CallNode then key.name
+                end
 
+              arg_name&.to_sym
+            end
+            paramters = signatures[active_sig_index]&.parameters || []
+            paramters.find_index do |param|
+              next unless param.is_a?(RubyIndexer::Entry::KeywordParameter) ||
+                param.is_a?(RubyIndexer::Entry::OptionalKeywordParameter)
+
+              !arg_names.include?(param.name)
+            end || T.must(signatures[active_sig_index]).parameters.length
+          else
+            arguments.length
+          end
+        active_parameter = (active_parameter - 1).clamp(0, parameter_length)
         # If there are arguments, then we need to check if there's a trailing comma after the end of the last argument
         # to advance the active parameter to the next one
         if arguments_node &&
